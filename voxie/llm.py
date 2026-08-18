@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from anthropic import Anthropic
 
-from .tools import apps, input as input_tools, screen, shell
+from .tools import apps, files, input as input_tools, screen, shell
 
 log = logging.getLogger("voxie.llm")
 
@@ -33,6 +33,8 @@ Guidelines:
   new state before trying again — don't guess twice.
 - Keyboard shortcuts are almost always better than clicking. Prefer `press_key`
   when the target has a shortcut (Ctrl+T for new tab, Alt+F4 to close, etc.).
+- To create or save a file (a script, a note, some code), use `write_file` —
+  never echo into a file with run_shell. Desktop/Documents/Downloads paths work.
 - If the user's request is destructive (delete, remove, close everything,
   shut down), the shell tool will refuse without confirmation. Ask them out
   loud to confirm and only re-run if they clearly say yes.
@@ -116,7 +118,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "run_shell",
-        "description": "Run a shell command via cmd. Destructive commands (rm, del, shutdown, kill, etc.) require confirmed=true.",
+        "description": "Run a shell command via cmd. Destructive commands (rm, del, shutdown, kill, etc.) require confirmed=true. Do NOT use this to write files — use write_file.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -124,6 +126,28 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
                 "confirmed": {"type": "boolean", "default": False},
             },
             "required": ["command"],
+        },
+    },
+    {
+        "name": "write_file",
+        "description": "Write text to a file. Use this to create files or save code/notes — NOT run_shell. Paths may use ~, env vars, or start with Desktop/Documents/Downloads. Refuses to overwrite an existing file unless overwrite=true.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "e.g. 'Desktop/hello.py' or 'C:/Users/me/notes.txt'"},
+                "content": {"type": "string"},
+                "overwrite": {"type": "boolean", "default": False},
+            },
+            "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "read_file",
+        "description": "Read a text file's contents. Paths may use ~, env vars, or start with Desktop/Documents/Downloads.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string"}},
+            "required": ["path"],
         },
     },
 ]
@@ -157,17 +181,33 @@ def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[s
         "press_key": input_tools.press_key,
         "open_url": apps.open_url,
         "run_shell": shell.run_shell,
+        "write_file": files.write_file,
+        "read_file": files.read_file,
     }
 
 
 class Assistant:
-    """Runs one full turn: transcript in → actions performed + spoken reply out."""
+    """Runs one full turn: transcript in → actions performed + spoken reply out.
 
-    MAX_TOOL_ROUNDS = 6  # safety cap on tool-use loop
+    Keeps a short rolling history of prior turns (your words + voxie's final
+    reply, NOT the tool-call noise or screenshots) so follow-up commands like
+    "now search for pyodide" after "open Chrome" have context.
+    """
+
+    MAX_TOOL_ROUNDS = 6      # safety cap on tool-use loop
+    MAX_HISTORY_TURNS = 6    # how many prior (user, assistant) pairs to keep
 
     def __init__(self, api_key: str, base_url: str | None, model: str) -> None:
         self.client = Anthropic(api_key=api_key, base_url=base_url)
         self.model = model
+        # Compact history: list of {"role": "user"|"assistant", "content": str}.
+        # Only plain text — tool_use/tool_result/image blocks are dropped so the
+        # context stays small and we never re-send stale screenshots.
+        self._history: list[dict[str, str]] = []
+
+    def reset_memory(self) -> None:
+        """Forget the conversation so far ('never mind' / tray → Clear memory)."""
+        self._history.clear()
 
     def run(
         self,
@@ -187,9 +227,12 @@ class Assistant:
         shot_holder: dict[str, screen.Screenshot | None] = {"shot": None}
         dispatcher = _make_dispatcher(shot_holder)
 
+        # Seed with prior turns for context, then this turn's transcript.
         messages: list[dict[str, Any]] = [
-            {"role": "user", "content": [{"type": "text", "text": transcript}]}
+            {"role": h["role"], "content": [{"type": "text", "text": h["content"]}]}
+            for h in self._history
         ]
+        messages.append({"role": "user", "content": [{"type": "text", "text": transcript}]})
         final_text = ""
 
         for _ in range(self.MAX_TOOL_ROUNDS):
@@ -207,7 +250,9 @@ class Assistant:
                     if getattr(block, "type", None) == "text":
                         final_text = block.text.strip()
                         break
-                return final_text or "Done."
+                reply = final_text or "Done."
+                self._remember(transcript, reply)
+                return reply
 
             # Execute every tool_use block the model requested this turn.
             tool_results: list[dict[str, Any]] = []
@@ -265,4 +310,15 @@ class Assistant:
                 })
             messages.append({"role": "user", "content": tool_results})
 
-        return final_text or "I stopped after too many steps. Try a smaller command."
+        reply = final_text or "I stopped after too many steps. Try a smaller command."
+        self._remember(transcript, reply)
+        return reply
+
+    def _remember(self, user_text: str, reply: str) -> None:
+        """Append this turn to history and trim to the last MAX_HISTORY_TURNS."""
+        self._history.append({"role": "user", "content": user_text})
+        self._history.append({"role": "assistant", "content": reply})
+        # Each turn is a (user, assistant) pair → keep 2× that many entries.
+        max_entries = self.MAX_HISTORY_TURNS * 2
+        if len(self._history) > max_entries:
+            self._history = self._history[-max_entries:]

@@ -50,6 +50,7 @@ class Voxie:
         self.tray = Tray(
             on_toggle_window=self.overlay_toggle,
             on_toggle_listen=self.toggle,
+            on_clear_memory=self.clear_memory,
             on_quit=self.quit,
             is_window_visible=lambda: self.overlay.is_visible,
         )
@@ -72,6 +73,11 @@ class Voxie:
     def overlay_toggle(self) -> None:
         """Show/hide the floating window. Bound to a tray-icon click."""
         self.overlay.toggle()
+
+    def clear_memory(self, *_args) -> None:
+        self.assistant.reset_memory()
+        self.overlay.append_trace("· memory cleared")
+        self.speaker.say("Memory cleared.")
 
     # ---- hotkey / tray toggle ----
     def toggle(self) -> None:
@@ -104,6 +110,14 @@ class Voxie:
                 self._set_state(State.IDLE)
                 return
             self.overlay.set_transcript(f"you: {transcript}")
+
+            # Voice escape hatch: clear context without spending an LLM call.
+            normalized = transcript.lower().strip().rstrip(".!")
+            if normalized in ("never mind", "nevermind", "forget that", "forget it", "clear memory", "start over"):
+                self.clear_memory()
+                self._set_state(State.IDLE)
+                return
+
             self._set_state(State.THINKING, "voxie · thinking…")
 
             def on_tool(name: str, result: dict) -> None:
