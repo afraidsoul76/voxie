@@ -16,6 +16,7 @@ from pynput import keyboard
 from .audio import Recorder, Transcriber, log_audio_devices, resolve_input_device
 from .config import Config
 from .llm import Assistant
+from .speech import Speaker
 from .ui.overlay import Overlay
 from .ui.tray import Tray
 
@@ -42,6 +43,7 @@ class Voxie:
             base_url=cfg.anthropic_base_url,
             model=cfg.model,
         )
+        self.speaker = Speaker(enabled=cfg.tts_enabled, rate=cfg.voice_rate)
         # Closing the frameless overlay hides it rather than quitting — the
         # tray icon is the real lifecycle control.
         self.overlay = Overlay(on_close=self.overlay_toggle)
@@ -112,6 +114,7 @@ class Voxie:
 
             reply = self.assistant.run(transcript, on_tool=on_tool)
             self.overlay.append_trace(f"→ {reply}")
+            self.speaker.say(reply)
             self._set_state(State.IDLE)
         except Exception as e:
             log.exception("processing failed")
@@ -126,11 +129,13 @@ class Voxie:
             if self.recorder.is_recording:
                 self.recorder.stop()
         finally:
+            self.speaker.stop()
             self.tray.stop()
             self.overlay.quit()
 
     def run(self) -> None:
         log_audio_devices()
+        self.speaker.start()
         self.tray.run_detached()
 
         hotkeys = keyboard.GlobalHotKeys({self.cfg.hotkey: self.toggle})

@@ -8,4 +8,9 @@ mss>=10.0.0
 Pillow>=10.4.0
 pystray>=0.19.5
 pynput>=1.7.7
+pyttsx3>=2.90
 python-dotenv>=1.0.1
+
+# Windows only — enables COM init on the TTS worker thread so pyttsx3 actually
+# speaks from a background thread. Safe to skip on other platforms.
+pywin32>=306 ; sys_platform == "win32"
