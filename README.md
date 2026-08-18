@@ -50,6 +50,40 @@ python -m voxie
 
 First run downloads the Whisper model (~150 MB, one-time).
 
+### Picking a microphone
+
+At startup voxie logs every input device it can see, with the OS default starred:
+
+```
+input devices (★ = default):
+    [0] Microsoft Sound Mapper - Input  (channels=2, samplerate=44100.0)
+  ★ [1] Microphone (KREO REC)           (channels=2, samplerate=44100.0)
+    [3] Microphone (WO Mic Device)      (channels=1, samplerate=44100.0)
+```
+
+If the starred device isn't the one you want, set `VOXIE_INPUT_DEVICE` in `.env`
+to either the index or any substring of the name:
+
+```bash
+VOXIE_INPUT_DEVICE=KREO   # or: VOXIE_INPUT_DEVICE=1
+```
+
+After each recording voxie logs the signal level so you can tell a dead mic from
+a bad transcription:
+
+```
+audio: 2.14s, peak=0.234, rms=0.0412
+```
+
+A `peak` above ~0.05 means the mic is live. Near zero prints an explicit
+**MIC IS SILENT** warning — you're recording from the wrong device.
+
+**A warning about Bluetooth earbuds:** Windows switches BT headsets to the
+hands-free profile (8–16 kHz mono) the moment something opens the mic, and that
+switch is unreliable — the device shows up in the list, opens without error, and
+delivers pure silence. A wired or USB mic avoids the whole mess. Phone-as-mic
+apps like [WO Mic](https://wolicheng.com/womic/) also work well over USB.
+
 ## How it fits together
 
 ```
