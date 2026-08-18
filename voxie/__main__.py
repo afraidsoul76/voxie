@@ -13,7 +13,7 @@ from enum import Enum
 
 from pynput import keyboard
 
-from .audio import Recorder, Transcriber
+from .audio import Recorder, Transcriber, log_audio_devices, resolve_input_device
 from .config import Config
 from .llm import Assistant
 from .ui.overlay import Overlay
@@ -33,7 +33,9 @@ class State(str, Enum):
 class Voxie:
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self.recorder = Recorder()
+        device_idx, device_label = resolve_input_device(cfg.input_device)
+        log.info("using input device: %s", device_label)
+        self.recorder = Recorder(device=device_idx)
         self.transcriber = Transcriber(cfg.whisper_model)
         self.assistant = Assistant(
             api_key=cfg.anthropic_api_key,
@@ -117,6 +119,7 @@ class Voxie:
             self.overlay.quit()
 
     def run(self) -> None:
+        log_audio_devices()
         self.tray.run_detached()
 
         hotkeys = keyboard.GlobalHotKeys({self.cfg.hotkey: self.toggle})

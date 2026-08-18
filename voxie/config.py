@@ -14,6 +14,7 @@ class Config:
     model: str
     whisper_model: str
     hotkey: str
+    input_device: str | None  # int as str (device index) OR substring of device name
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -29,4 +30,5 @@ class Config:
             model=os.environ.get("VOXIE_MODEL", "claude-sonnet-4-5").strip(),
             whisper_model=os.environ.get("VOXIE_WHISPER_MODEL", "base.en").strip(),
             hotkey=os.environ.get("VOXIE_HOTKEY", "<ctrl>+<alt>+<space>").strip(),
+            input_device=(os.environ.get("VOXIE_INPUT_DEVICE", "").strip() or None),
         )
