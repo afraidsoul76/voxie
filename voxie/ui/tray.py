@@ -35,11 +35,21 @@ class Tray:
 
     def __init__(
         self,
+        on_toggle_window: Callable[[], None],
         on_toggle_listen: Callable[[], None],
         on_quit: Callable[[], None],
+        is_window_visible: Callable[[], bool],
     ) -> None:
+        # `default=True` makes this the action for a plain click on the icon.
+        # The overlay is frameless, so it never appears in the taskbar — the
+        # tray icon is the only way to get it back once hidden.
         menu = pystray.Menu(
-            pystray.MenuItem("Start / stop listening", on_toggle_listen, default=True),
+            pystray.MenuItem(
+                lambda _: "Hide window" if is_window_visible() else "Show window",
+                on_toggle_window,
+                default=True,
+            ),
+            pystray.MenuItem("Start / stop listening", on_toggle_listen),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", on_quit),
         )

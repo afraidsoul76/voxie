@@ -49,7 +49,9 @@ class Overlay:
             w.bind("<Button-1>", self._start_drag)
             w.bind("<B1-Motion>", self._drag)
 
-        # Start hidden.
+        # Start hidden. `_visible` mirrors the window state as a plain bool so
+        # the tray thread can check it without calling into Tk.
+        self._visible = False
         self.root.withdraw()
 
     def _start_drag(self, e):
@@ -63,11 +65,21 @@ class Overlay:
         """Schedule `fn` on the Tk mainloop."""
         self.root.after(0, fn)
 
+    @property
+    def is_visible(self) -> bool:
+        """Plain bool, safe to read from the tray thread without touching Tk."""
+        return self._visible
+
     def show(self) -> None:
+        self._visible = True
         self.post(lambda: (self.root.deiconify(), self.root.lift()))
 
     def hide(self) -> None:
+        self._visible = False
         self.post(self.root.withdraw)
+
+    def toggle(self) -> None:
+        self.hide() if self._visible else self.show()
 
     def set_status(self, text: str, color: str = "#94a3b8") -> None:
         self.post(lambda: (self.status.config(text=text, fg=color)))

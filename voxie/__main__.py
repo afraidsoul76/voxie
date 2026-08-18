@@ -42,8 +42,15 @@ class Voxie:
             base_url=cfg.anthropic_base_url,
             model=cfg.model,
         )
-        self.overlay = Overlay(on_close=self.quit)
-        self.tray = Tray(on_toggle_listen=self.toggle, on_quit=self.quit)
+        # Closing the frameless overlay hides it rather than quitting — the
+        # tray icon is the real lifecycle control.
+        self.overlay = Overlay(on_close=self.overlay_toggle)
+        self.tray = Tray(
+            on_toggle_window=self.overlay_toggle,
+            on_toggle_listen=self.toggle,
+            on_quit=self.quit,
+            is_window_visible=lambda: self.overlay.is_visible,
+        )
         self._state = State.IDLE
         self._busy_lock = threading.Lock()
 
@@ -59,6 +66,10 @@ class Voxie:
         label = note or f"voxie · {s.value}"
         self.overlay.set_status(label, color=color)
         self.tray.set_state(s.value)
+
+    def overlay_toggle(self) -> None:
+        """Show/hide the floating window. Bound to a tray-icon click."""
+        self.overlay.toggle()
 
     # ---- hotkey / tray toggle ----
     def toggle(self) -> None:
