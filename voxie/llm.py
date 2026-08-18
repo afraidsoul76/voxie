@@ -24,11 +24,13 @@ SYSTEM_PROMPT = """You are voxie, a voice-controlled desktop assistant.
 The user speaks a command; you carry it out by calling the tools below.
 
 Guidelines:
-- Prefer the SIMPLEST tool that does the job. Don't screenshot if the user just
-  asked you to open an app or run a command.
-- When you need to click something on screen, base your coordinates on the
-  attached screenshot. The screenshot's coordinate system starts at (0,0) in
-  the top-left. Use `click_xy` with those coordinates.
+- Prefer the SIMPLEST tool that does the job. Most commands (open an app, run a
+  command, press a key, focus a window) need NO screenshot — don't take one.
+- Only when you must click something by position: call `take_screenshot` first,
+  then `click_xy` with coordinates in that screenshot's pixel space (top-left is
+  0,0). The screenshot result tells you its width and height.
+- If a click doesn't land where you expected, take a fresh screenshot to see the
+  new state before trying again — don't guess twice.
 - Keyboard shortcuts are almost always better than clicking. Prefer `press_key`
   when the target has a shortcut (Ctrl+T for new tab, Alt+F4 to close, etc.).
 - If the user's request is destructive (delete, remove, close everything,
@@ -68,8 +70,13 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "take_screenshot",
+        "description": "Capture the current screen so you can SEE it. Call this before clicking anything by position, or when the user asks about what's on screen. Returns an image; note its pixel dimensions for your click coordinates.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
         "name": "click_xy",
-        "description": "Click at an (x, y) coordinate on the primary display. Coordinates are relative to the screenshot you were given.",
+        "description": "Click at an (x, y) coordinate on the primary display. Coordinates must be relative to the most recent screenshot you took with take_screenshot.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -122,14 +129,24 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
 ]
 
 
-def _make_dispatcher(shot: screen.Screenshot | None) -> dict[str, Callable[..., dict]]:
-    """Wire each tool name to its handler. click_xy is closed over the screenshot
-    so we can rescale coords from what-Claude-saw back to real-pixels."""
+def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[str, Callable[..., dict]]:
+    """Wire each tool name to its handler.
+
+    click_xy reads the most-recent screenshot from `shot_holder` so it can
+    rescale the coords Claude gave (against the downscaled image it saw) back
+    to real screen pixels. take_screenshot is handled specially in the loop
+    (it returns an image block, not a plain dict), so it isn't here.
+    """
 
     def click_xy(x: int, y: int, button: str = "left") -> dict:
+        shot = shot_holder.get("shot")
         if shot is not None:
             x, y = shot.to_screen_coords(x, y)
-        return input_tools.click_xy(x, y, button=button)
+            return input_tools.click_xy(x, y, button=button)
+        return {
+            "ok": False,
+            "error": "no screenshot yet — call take_screenshot before clicking by position",
+        }
 
     return {
         "open_app": apps.open_app,
@@ -155,26 +172,24 @@ class Assistant:
     def run(
         self,
         transcript: str,
-        include_screenshot: bool = True,
         on_tool: Callable[[str, dict], None] | None = None,
     ) -> str:
         """Execute the loop. Returns the model's final spoken text.
 
+        No screenshot is sent up front — Claude calls take_screenshot only when
+        it actually needs to see the screen. Most commands (open an app, run a
+        command, press a key) never need vision, so this skips the capture +
+        upload cost on the common path.
+
         `on_tool` is called after each tool executes so the UI can render a
         live "voxie is doing X" trace.
         """
-        shot = screen.capture_primary() if include_screenshot else None
-        dispatcher = _make_dispatcher(shot)
+        shot_holder: dict[str, screen.Screenshot | None] = {"shot": None}
+        dispatcher = _make_dispatcher(shot_holder)
 
-        user_content: list[dict[str, Any]] = []
-        if shot is not None:
-            user_content.append({
-                "type": "image",
-                "source": {"type": "base64", "media_type": shot.media_type, "data": shot.image_b64},
-            })
-        user_content.append({"type": "text", "text": transcript})
-
-        messages: list[dict[str, Any]] = [{"role": "user", "content": user_content}]
+        messages: list[dict[str, Any]] = [
+            {"role": "user", "content": [{"type": "text", "text": transcript}]}
+        ]
         final_text = ""
 
         for _ in range(self.MAX_TOOL_ROUNDS):
@@ -201,6 +216,32 @@ class Assistant:
                     continue
                 name = block.name
                 args = dict(block.input or {})
+
+                # take_screenshot is special: it returns an image block so the
+                # model can actually see the screen, and it stashes the shot so
+                # click_xy can rescale coordinates against it.
+                if name == "take_screenshot":
+                    shot = screen.capture_primary()
+                    shot_holder["shot"] = shot
+                    note = {"ok": True, "width": shot.sent_width, "height": shot.sent_height}
+                    if on_tool:
+                        try:
+                            on_tool(name, note)
+                        except Exception:
+                            log.exception("on_tool callback raised")
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": [
+                            {"type": "text",
+                             "text": f"Screenshot captured. Image is {shot.sent_width}x{shot.sent_height} px; "
+                                     f"give click coordinates in that space."},
+                            {"type": "image",
+                             "source": {"type": "base64", "media_type": shot.media_type, "data": shot.image_b64}},
+                        ],
+                    })
+                    continue
+
                 handler = dispatcher.get(name)
                 if handler is None:
                     result = {"ok": False, "error": f"unknown tool: {name}"}
