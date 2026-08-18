@@ -19,9 +19,12 @@ class Overlay:
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0b1220")
         self.root.protocol("WM_DELETE_WINDOW", on_close)
-        # Hide the window frame chrome — feels more like an overlay, less like a tool.
+        # `-toolwindow` gives a slim frame and NO taskbar button (overlay-ish),
+        # while keeping withdraw/deiconify reliable — unlike overrideredirect,
+        # which breaks show-after-hide on Windows and made the window vanish on
+        # focus changes. The native title bar also handles dragging + close.
         try:
-            self.root.overrideredirect(True)
+            self.root.attributes("-toolwindow", True)
         except tk.TclError:
             pass
 
@@ -44,22 +47,10 @@ class Overlay:
         )
         self.trace.pack(fill="both", expand=True, padx=8, pady=(4, 8))
 
-        # Drag anywhere on the window.
-        for w in (self.status, self.transcript):
-            w.bind("<Button-1>", self._start_drag)
-            w.bind("<B1-Motion>", self._drag)
-
         # Start hidden. `_visible` mirrors the window state as a plain bool so
         # the tray thread can check it without calling into Tk.
         self._visible = False
         self.root.withdraw()
-
-    def _start_drag(self, e):
-        self._drag_start = (e.x_root - self.root.winfo_x(), e.y_root - self.root.winfo_y())
-
-    def _drag(self, e):
-        dx, dy = getattr(self, "_drag_start", (0, 0))
-        self.root.geometry(f"+{e.x_root - dx}+{e.y_root - dy}")
 
     def post(self, fn: Callable[[], None]) -> None:
         """Schedule `fn` on the Tk mainloop."""
@@ -70,9 +61,16 @@ class Overlay:
         """Plain bool, safe to read from the tray thread without touching Tk."""
         return self._visible
 
+    def _do_show(self) -> None:
+        self.root.deiconify()
+        self.root.lift()
+        # Re-assert topmost — a plain lift() sometimes isn't enough to pull the
+        # window above another topmost window.
+        self.root.attributes("-topmost", True)
+
     def show(self) -> None:
         self._visible = True
-        self.post(lambda: (self.root.deiconify(), self.root.lift()))
+        self.post(self._do_show)
 
     def hide(self) -> None:
         self._visible = False
