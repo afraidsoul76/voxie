@@ -7,6 +7,18 @@ through Overlay.post(...).
 from __future__ import annotations
 
 import logging
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+log = logging.getLogger("voxie")
+
+# Declare DPI awareness FIRST — before pyautogui/mss get imported (transitively
+# via .llm below), because a process's DPI awareness can only be set once and
+# the first setter wins. This keeps screen-capture and click coordinates in the
+# same physical-pixel space on scaled displays.
+from .dpi import set_dpi_awareness
+
+set_dpi_awareness()
+
 import sys
 import threading
 from enum import Enum
@@ -19,9 +31,6 @@ from .llm import Assistant
 from .speech import Speaker
 from .ui.overlay import Overlay
 from .ui.tray import Tray
-
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
-log = logging.getLogger("voxie")
 
 
 class State(str, Enum):
