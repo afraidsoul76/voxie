@@ -32,10 +32,11 @@ from .audio import SAMPLE_RATE
 log = logging.getLogger("voxie.wake")
 
 BLOCK = 1600                 # 0.1s at 16k
-SPEECH_RMS = 0.012           # above this counts as speech
+SPEECH_RMS = 0.020           # above this counts as speech (higher = less noise pickup)
 SILENCE_BLOCKS = 5           # 0.5s of quiet ends a segment
 MIN_SPEECH_BLOCKS = 3        # ignore blips shorter than 0.3s
-MAX_SEGMENT_BLOCKS = 40      # 4s cap - wake phrases are short
+MAX_SEGMENT_BLOCKS = 25      # 2.5s cap - a wake phrase is short; longer
+                             # segments are someone talking, not calling us
 COOLDOWN_S = 2.0             # don't re-fire immediately after a hit
 
 
@@ -101,7 +102,7 @@ class WakeListener:
         self,
         phrase: str,
         on_wake: Callable[[], None],
-        model_name: str = "tiny.en",
+        model_name: str = "base.en",
         device: int | None = None,
         aliases: str = "",
     ) -> None:
@@ -228,7 +229,11 @@ class WakeListener:
         audio = np.concatenate(segment, axis=0).flatten().astype(np.float32)
         try:
             model = self._ensure_model()
-            segs, _ = model.transcribe(audio, language="en", beam_size=1, vad_filter=False)
+            segs, _ = model.transcribe(
+                audio, language="en", beam_size=1, vad_filter=False,
+                condition_on_previous_text=False,  # stop it inventing continuations
+                no_speech_threshold=0.6,
+            )
             text = _normalize(" ".join(s.text for s in segs))
         except Exception:
             log.exception("wake transcription failed")
