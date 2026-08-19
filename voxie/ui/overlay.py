@@ -171,10 +171,32 @@ class Overlay:
             import ctypes
 
             GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_TRANSPARENT = -20, 0x00080000, 0x00000020
-            hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
-            style = ctypes.windll.user32.GetWindowLongW(hwnd, GWL_EXSTYLE)
+            self._hwnd = ctypes.windll.user32.GetParent(self.root.winfo_id())
+            style = ctypes.windll.user32.GetWindowLongW(self._hwnd, GWL_EXSTYLE)
             ctypes.windll.user32.SetWindowLongW(
-                hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT)
+                self._hwnd, GWL_EXSTYLE, style | WS_EX_LAYERED | WS_EX_TRANSPARENT)
+        except Exception:
+            self._hwnd = None
+
+    def _reassert_topmost(self) -> None:
+        """Keep the pill above other windows without stealing focus.
+
+        A frameless (overrideredirect) window quietly loses its topmost z-order
+        when another app is activated - the symptom was the pill vanishing the
+        moment you clicked another app and never coming back. Tk's
+        attributes("-topmost") can also pull focus, so this goes through
+        SetWindowPos with SWP_NOACTIVATE instead.
+        """
+        if not getattr(self, "_hwnd", None):
+            return
+        try:
+            import ctypes
+
+            HWND_TOPMOST = -1
+            SWP_NOSIZE, SWP_NOMOVE, SWP_NOACTIVATE = 0x0001, 0x0002, 0x0010
+            ctypes.windll.user32.SetWindowPos(
+                self._hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
         except Exception:
             pass
 
@@ -234,6 +256,11 @@ class Overlay:
         # cross-fade waveform <-> text
         wt = 1.0 if self._listening else 0.0
         self._wave_mix += (wt - self._wave_mix) * XFADE_STEP
+
+        # Cheap insurance against losing z-order to a newly focused app.
+        self._topmost_tick = getattr(self, '_topmost_tick', 0) + 1
+        if self._alpha > 0.05 and self._topmost_tick % 15 == 0:
+            self._reassert_topmost()
 
         self._draw_orb(pulse)
         self._draw_wave()
