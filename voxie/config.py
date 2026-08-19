@@ -22,6 +22,8 @@ class Config:
     wake_phrase: str
     wake_model: str
     wake_aliases: str
+    auto_send: bool
+    silence_hold: float
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -45,7 +47,17 @@ class Config:
             wake_phrase=os.environ.get("VOXIE_WAKE_PHRASE", "voxie").strip(),
             wake_model=os.environ.get("VOXIE_WAKE_MODEL", "base.en").strip(),
             wake_aliases=os.environ.get("VOXIE_WAKE_ALIASES", "").strip(),
+            auto_send=os.environ.get("VOXIE_AUTO_SEND", "on").strip().lower()
+                      in ("on", "1", "true", "yes"),
+            silence_hold=_float_or(os.environ.get("VOXIE_SILENCE_HOLD", ""), 1.3),
         )
+
+
+def _float_or(s: str, default: float) -> float:
+    try:
+        return float(s) if s else default
+    except ValueError:
+        return default
 
 
 def _int_or_none(s: str) -> int | None:

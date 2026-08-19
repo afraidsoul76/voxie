@@ -318,8 +318,15 @@ class SettingsWindow:
                  WHISPER_MODELS).pack(fill="x", pady=(6, 0))
 
     def _build_voice(self) -> None:
-        p = self._page("voice", "Voice", "Applied immediately", ACCENT)
-        Toggle(p, self._bool_var("VOXIE_TTS", True), "Speak replies out loud").pack(anchor="w", pady=(0, 20))
+        p = self._page("voice", "Voice", "Speech applies now; turn-taking on restart", ACCENT)
+        Toggle(p, self._bool_var("VOXIE_TTS", True), "Speak replies out loud").pack(anchor="w", pady=(0, 16))
+        Toggle(p, self._bool_var("VOXIE_AUTO_SEND", True),
+               "Send when I stop talking (no second keypress)").pack(anchor="w", pady=(0, 16))
+
+        f = Field(p, "Pause before sending (seconds)",
+                  "How long a silence counts as done talking. Raise it if you get cut off "
+                  "mid-thought; lower it for snappier turnaround.")
+        f.pack(fill="x", pady=(0, 16)); f.entry(self._str_var("VOXIE_SILENCE_HOLD", "1.3"))
 
         f = Field(p, "Speaking rate", "Words per minute. Blank uses the system default (~200).")
         f.pack(fill="x", pady=(0, 16)); f.entry(self._str_var("VOXIE_VOICE_RATE"))

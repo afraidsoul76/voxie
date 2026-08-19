@@ -74,6 +74,7 @@ class Voxie:
         self._state = State.IDLE
         self._busy_lock = threading.Lock()
         self._dictating = False  # True when the active recording is dictation
+        self.SILENCE_HOLD_S = cfg.silence_hold
         self.wake: WakeListener | None = None
         if cfg.wake_enabled:
             self.wake = WakeListener(
@@ -147,7 +148,7 @@ class Voxie:
     # ---- hotkey / tray toggle ----
     def toggle(self) -> None:
         if self._state == State.IDLE:
-            self._start_listen()
+            self._start_listen(auto_stop=self.cfg.auto_send)
         elif self._state == State.LISTENING:
             self._stop_and_process()
         # ignore toggles during thinking/acting — user has to wait
@@ -163,7 +164,7 @@ class Voxie:
     # Auto-stop tuning for wake-word sessions.
     SPEECH_LEVEL = 0.08      # recorder.level counts as speech above this
     WAIT_FOR_SPEECH_S = 5.0  # give up if they never start talking
-    SILENCE_HOLD_S = 1.3     # end the turn after this much quiet
+    SILENCE_HOLD_S = 1.3     # default; overridden per-instance from config
     MAX_RECORD_S = 20.0      # hard ceiling
 
     def _auto_stop_watch(self) -> None:
