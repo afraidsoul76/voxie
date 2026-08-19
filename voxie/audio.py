@@ -79,6 +79,7 @@ class Recorder:
         self._buffer: queue.Queue[np.ndarray] = queue.Queue()
         self._recording = False
         self._level = 0.0
+        self._noise_floor = 0.005
 
     @property
     def is_recording(self) -> bool:
@@ -93,6 +94,15 @@ class Recorder:
             rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
             # Attack fast, release slow - reads better than a raw RMS.
             self._level = max(rms, self._level * 0.82)
+
+            # Adaptive noise floor: fall quickly toward a new quiet level, rise
+            # only slowly. A FIXED speech threshold cannot work across rooms -
+            # in a noisy one the level never drops under it, so end-of-speech is
+            # never detected and recording runs forever.
+            if rms < self._noise_floor:
+                self._noise_floor += (rms - self._noise_floor) * 0.25
+            else:
+                self._noise_floor += (rms - self._noise_floor) * 0.0008
         except Exception:
             pass
         self._buffer.put(indata.copy())
@@ -101,6 +111,21 @@ class Recorder:
     def level(self) -> float:
         """Smoothed mic level, roughly 0..1, for the UI waveform."""
         return min(1.0, self._level * 12.0)
+
+    @property
+    def speech_threshold(self) -> float:
+        """Level (in `level` units) that counts as speech in THIS room.
+
+        Sits a few times above the measured noise floor, with a hard minimum so
+        a silent mic can't drive it to zero and a ceiling so a very loud room
+        can't push it beyond reach of normal speech.
+        """
+        floor = min(1.0, self._noise_floor * 12.0)
+        return max(0.05, min(0.45, floor * 3.5 + 0.02))
+
+    @property
+    def noise_floor(self) -> float:
+        return min(1.0, self._noise_floor * 12.0)
 
     def start(self) -> None:
         if self._recording:
@@ -167,6 +192,39 @@ class Transcriber:
                 compute_type="int8",  # CPU-friendly, decent accuracy
             )
 
+    @staticmethod
+    def clean(audio: np.ndarray) -> np.ndarray:
+        """Light denoise before transcription.
+
+        Subtracting a short moving average is a high-pass filter: it removes
+        fan hum, desk rumble and mains buzz, which sit below the voice and are
+        what Whisper most often hallucinates words out of. Done with a cumsum
+        so it stays vectorised - a one-pole IIR would need a Python loop over
+        every sample, which is far too slow for a multi-second clip.
+
+        Then normalise, because a quiet mic transcribes much worse than a loud
+        one and Whisper has no automatic gain.
+        """
+        if audio.size == 0:
+            return audio
+
+        # A moving average of N taps high-passes with a corner near
+        # 0.44*fs/N. N=100 at 16kHz puts it around 70Hz - below the male
+        # voice fundamental (~85Hz) but above hum and rumble.
+        win = 100
+        if audio.size > win:
+            padded = np.pad(audio, (win // 2, win - win // 2), mode="edge")
+            csum = np.cumsum(np.insert(padded.astype(np.float64), 0, 0.0))
+            moving = (csum[win:] - csum[:-win]) / win
+            out = (audio - moving[: audio.size]).astype(np.float32)
+        else:
+            out = audio - float(np.mean(audio))
+
+        peak = float(np.max(np.abs(out)))
+        if peak > 1e-6:
+            out = out * min(8.0, 0.92 / peak)  # cap the boost so noise isn't amplified
+        return out.astype(np.float32)
+
     def transcribe(self, audio: np.ndarray) -> str:
         """Return the recognised text, or '' for empty/noise-only clips."""
         if audio.size < SAMPLE_RATE // 4:  # less than 250 ms of audio
@@ -184,6 +242,7 @@ class Transcriber:
             "  ⚠ MIC IS SILENT — check Windows input device" if peak < 0.001 else "",
         )
 
+        audio = self.clean(audio)
         self._ensure_loaded()
         assert self._model is not None
         # VAD off: push-to-talk already tells us when to start/stop, and the

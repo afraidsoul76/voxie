@@ -162,7 +162,10 @@ class Voxie:
         self.recorder.start()
 
     # Auto-stop tuning for wake-word sessions.
-    SPEECH_LEVEL = 0.08      # recorder.level counts as speech above this
+    # Speech threshold is no longer a constant - it adapts to the room's
+    # noise floor. A fixed value meant that in a noisy room the level never
+    # dropped below it, so end-of-speech was never detected and recording
+    # ran until the hard cap.
     WAIT_FOR_SPEECH_S = 5.0  # give up if they never start talking
     SILENCE_HOLD_S = 1.3     # default; overridden per-instance from config
     MAX_RECORD_S = 20.0      # hard ceiling
@@ -172,15 +175,22 @@ class Voxie:
         started = time.time()
         heard_speech = False
         quiet_since: float | None = None
+        # Let the floor settle on this room before trusting it.
+        time.sleep(0.3)
+        threshold = self.recorder.speech_threshold
+        log.info("auto-stop armed: noise floor %.3f, speech above %.3f",
+                 self.recorder.noise_floor, threshold)
 
         while self._state == State.LISTENING:
             time.sleep(0.1)
             now = time.time()
             level = self.recorder.level
+            if not heard_speech:
+                threshold = self.recorder.speech_threshold
 
             if now - started > self.MAX_RECORD_S:
                 break
-            if level >= self.SPEECH_LEVEL:
+            if level >= threshold:
                 heard_speech = True
                 quiet_since = None
                 continue
