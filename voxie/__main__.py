@@ -28,6 +28,7 @@ from pynput import keyboard
 
 from .audio import Recorder, Transcriber, log_audio_devices, resolve_input_device
 from .config import Config
+from . import fastpath
 from .llm import Assistant
 from .tools.input import type_text
 from .speech import Speaker
@@ -237,6 +238,17 @@ class Voxie:
                 self._set_state(State.IDLE)
                 return
 
+            # Try the local fast path first. Most commands are a single
+            # unambiguous action, and routing those through the model cost two
+            # API round-trips - one to pick the tool, one just to word the
+            # confirmation - for something that resolves in microseconds here.
+            fast = fastpath.match(transcript)
+            if fast is not None:
+                self._set_state(State.ACTING)
+                self._run_fast(fast)
+                self._set_state(State.IDLE)
+                return
+
             self._set_state(State.THINKING, "voxie · thinking…")
 
             def on_tool(name: str, result: dict) -> None:
@@ -325,6 +337,41 @@ class Voxie:
         finally:
             self._dictating = False
             self._busy_lock.release()
+
+    def _run_fast(self, fast) -> dict:
+        """Execute a fast-path match directly, with no model involved."""
+        from .llm import _make_dispatcher
+
+        handler = _make_dispatcher({"shot": None}).get(fast.tool)
+        if handler is None:  # shouldn't happen; fall back rather than break
+            log.warning("fast path produced unknown tool %s", fast.tool)
+            return {"ok": False}
+        try:
+            res = handler(**fast.args)
+        except Exception as e:
+            log.exception("fast path tool failed")
+            self.overlay.append_trace(f"x {fast.tool}: {e}")
+            self.speaker.say("That didn't work.")
+            return {"ok": False}
+
+        ok = res.get("ok", True)
+        self.overlay.append_trace(f"{'v' if ok else 'x'} {fast.tool} (instant)")
+        if not ok:
+            self.speaker.say(str(res.get("error", "That didn't work."))[:120])
+            return res
+
+        # Tools that return information speak it; actions use the canned line.
+        if fast.tool == "clipboard_read":
+            text = (res.get("text") or "").strip()
+            self.speaker.say(f"Your clipboard says: {text[:200]}" if text
+                             else "Your clipboard is empty.")
+        elif fast.tool == "list_windows":
+            names = [w for w in res.get("windows", []) if w][:6]
+            self.speaker.say("You have " + ", ".join(names) + "." if names
+                             else "No windows open.")
+        elif fast.reply:
+            self.speaker.say(fast.reply)
+        return res
 
     # ---- lifecycle ----
     def quit(self) -> None:
