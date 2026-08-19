@@ -41,3 +41,20 @@ def press_key(keys: str) -> dict[str, Any]:
         return {"ok": True, "pressed": keys}
     except Exception as e:
         return {"ok": False, "error": f"press failed: {e}"}
+
+
+def scroll(direction: str = "down", amount: int = 5) -> dict[str, Any]:
+    """Scroll the surface under the cursor. direction: up/down/left/right.
+    `amount` is in notches; one notch ≈ a few lines."""
+    clicks = amount * 120  # pyautogui scroll unit ≈ 120 per notch on Windows
+    try:
+        d = direction.lower().strip()
+        if d in ("up", "down"):
+            pyautogui.scroll(clicks if d == "up" else -clicks)
+        elif d in ("left", "right"):
+            pyautogui.hscroll(clicks if d == "right" else -clicks)
+        else:
+            return {"ok": False, "error": f"unknown scroll direction: {direction}"}
+        return {"ok": True, "scrolled": direction, "amount": amount}
+    except Exception as e:
+        return {"ok": False, "error": f"scroll failed: {e}"}

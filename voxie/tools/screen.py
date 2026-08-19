@@ -58,3 +58,11 @@ def capture_primary(max_long_side: int = 1568) -> Screenshot:
         sent_width=sent_w,
         sent_height=sent_h,
     )
+
+
+def capture_full_pil() -> Image.Image:
+    """Full-resolution PIL image of the primary display (no downscaling) — for
+    saving to disk or putting on the clipboard, where we want real pixels."""
+    with mss.mss() as sct:
+        raw = sct.grab(sct.monitors[1])
+    return Image.frombytes("RGB", raw.size, raw.rgb)

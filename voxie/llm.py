@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from anthropic import Anthropic
 
-from .tools import apps, files, input as input_tools, screen, shell
+from .tools import apps, files, input as input_tools, media, screen, shell, system
 
 log = logging.getLogger("voxie.llm")
 
@@ -31,10 +31,16 @@ Guidelines:
   0,0). The screenshot result tells you its width and height.
 - If a click doesn't land where you expected, take a fresh screenshot to see the
   new state before trying again — don't guess twice.
+- After opening an app or navigating to a page, `wait` a second or two before you
+  take_screenshot — acting before it renders is the #1 cause of missed clicks.
+- Use `scroll` to reach things off-screen before trying to click them.
 - Keyboard shortcuts are almost always better than clicking. Prefer `press_key`
   when the target has a shortcut (Ctrl+T for new tab, Alt+F4 to close, etc.).
 - To create or save a file (a script, a note, some code), use `write_file` —
   never echo into a file with run_shell. Desktop/Documents/Downloads paths work.
+- To SEND a screenshot into a chat app: screenshot_to_clipboard, click the
+  message box, press_key ctrl+v to paste, then press_key enter. Don't fight the
+  file-upload dialog. Use save_screenshot when they want it as a file on disk.
 - If the user's request is destructive (delete, remove, close everything,
   shut down), the shell tool will refuse without confirmation. Ask them out
   loud to confirm and only re-run if they clearly say yes.
@@ -150,6 +156,61 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
             "required": ["path"],
         },
     },
+    {
+        "name": "save_screenshot",
+        "description": "Capture the screen and SAVE it to a PNG file (default: Desktop/voxie_screenshot.png). Use when the user wants a screenshot as a file, or to attach/upload one.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "optional destination, e.g. 'Desktop/shot.png'"}},
+        },
+    },
+    {
+        "name": "screenshot_to_clipboard",
+        "description": "Capture the screen and put it on the clipboard as an image. To send a screenshot into a chat (Telegram, Discord, etc.): call this, focus the message box, then press_key ctrl+v to paste, then press_key enter to send. This avoids the file-upload dialog.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "scroll",
+        "description": "Scroll the surface under the cursor. direction: up/down/left/right; amount is in notches (default 5).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "direction": {"type": "string", "enum": ["up", "down", "left", "right"], "default": "down"},
+                "amount": {"type": "integer", "default": 5},
+            },
+        },
+    },
+    {
+        "name": "wait",
+        "description": "Pause for N seconds before your next action — use this to let an app launch or a page load before you take_screenshot. Max 10s.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"seconds": {"type": "number", "default": 1.0}},
+        },
+    },
+    {
+        "name": "clipboard_write",
+        "description": "Put text on the clipboard (paste later with press_key ctrl+v).",
+        "input_schema": {
+            "type": "object",
+            "properties": {"text": {"type": "string"}},
+            "required": ["text"],
+        },
+    },
+    {
+        "name": "clipboard_read",
+        "description": "Read the text currently on the clipboard.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "snap_window",
+        "description": "Lay out the focused window: left / right / maximize / minimize / restore.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"where": {"type": "string", "enum": ["left", "right", "maximize", "minimize", "restore"]}},
+            "required": ["where"],
+        },
+    },
 ]
 
 
@@ -183,6 +244,13 @@ def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[s
         "run_shell": shell.run_shell,
         "write_file": files.write_file,
         "read_file": files.read_file,
+        "save_screenshot": media.save_screenshot,
+        "screenshot_to_clipboard": media.screenshot_to_clipboard,
+        "scroll": input_tools.scroll,
+        "wait": system.wait,
+        "clipboard_write": system.clipboard_write,
+        "clipboard_read": system.clipboard_read,
+        "snap_window": system.snap_window,
     }
 
 
@@ -194,7 +262,8 @@ class Assistant:
     "now search for pyodide" after "open Chrome" have context.
     """
 
-    MAX_TOOL_ROUNDS = 6      # safety cap on tool-use loop
+    MAX_TOOL_ROUNDS = 14     # safety cap; multi-step tasks (open app, navigate,
+                             # click, paste, send) legitimately need ~10+ rounds
     MAX_HISTORY_TURNS = 6    # how many prior (user, assistant) pairs to keep
 
     def __init__(self, api_key: str, base_url: str | None, model: str) -> None:
