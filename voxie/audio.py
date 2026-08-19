@@ -78,6 +78,7 @@ class Recorder:
         self._stream: Optional[sd.InputStream] = None
         self._buffer: queue.Queue[np.ndarray] = queue.Queue()
         self._recording = False
+        self._level = 0.0
 
     @property
     def is_recording(self) -> bool:
@@ -87,7 +88,19 @@ class Recorder:
         if status:
             # Overflows / underflows aren't fatal — just drop the chunk.
             return
+        # Track a smoothed input level so the UI can draw a live waveform.
+        try:
+            rms = float(np.sqrt(np.mean(indata.astype(np.float32) ** 2)))
+            # Attack fast, release slow - reads better than a raw RMS.
+            self._level = max(rms, self._level * 0.82)
+        except Exception:
+            pass
         self._buffer.put(indata.copy())
+
+    @property
+    def level(self) -> float:
+        """Smoothed mic level, roughly 0..1, for the UI waveform."""
+        return min(1.0, self._level * 12.0)
 
     def start(self) -> None:
         if self._recording:

@@ -56,6 +56,8 @@ class Voxie:
         # Closing the frameless overlay hides it rather than quitting — the
         # tray icon is the real lifecycle control.
         self.overlay = Overlay(on_close=self.overlay_toggle)
+        # Drive the overlay waveform from the real mic level.
+        self.overlay.set_level_source(lambda: self.recorder.level)
         self.tray = Tray(
             on_toggle_window=self.overlay_toggle,
             on_toggle_listen=self.toggle,
@@ -77,6 +79,7 @@ class Voxie:
         }[s]
         label = note or f"voxie · {s.value}"
         self.overlay.set_status(label, color=color)
+        self.overlay.set_busy(s != State.IDLE)
         self.tray.set_state(s.value)
 
     def overlay_toggle(self) -> None:
@@ -98,12 +101,13 @@ class Voxie:
 
     def _start_listen(self) -> None:
         self.overlay.clear_trace()
-        self.overlay.set_transcript("(speak now — press the hotkey again to send)")
-        self.overlay.show()
-        self._set_state(State.LISTENING)
+        self.overlay.set_transcript("listening...")
+        self.overlay.set_listening(True)
+        self._set_state(State.LISTENING)  # sets busy → pill fades in
         self.recorder.start()
 
     def _stop_and_process(self) -> None:
+        self.overlay.set_listening(False)
         audio = self.recorder.stop()
         threading.Thread(target=self._process, args=(audio,), daemon=True).start()
 
@@ -164,8 +168,11 @@ class Voxie:
         hotkeys = keyboard.GlobalHotKeys({self.cfg.hotkey: self.toggle})
         hotkeys.start()
 
-        self.overlay.show()
-        self._set_state(State.IDLE, f"voxie · press {self.cfg.hotkey} to talk")
+        # Brief hello on launch, then let it auto-fade.
+        self.overlay.set_transcript(f"press {self.cfg.hotkey} to talk to me")
+        self._set_state(State.IDLE, "voxie · ready")
+        self.overlay.set_busy(True)
+        self.overlay.post(lambda: self.overlay.root.after(2500, lambda: self.overlay.set_busy(False)))
         try:
             self.overlay.mainloop()
         finally:
