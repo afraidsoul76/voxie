@@ -74,20 +74,44 @@ def list_routines() -> dict[str, Any]:
     }
 
 
+# Words people pad a spoken routine name with; ignored when matching.
+_FILLER = {"run", "start", "launch", "do", "execute", "my", "the", "a", "an",
+           "please", "routine", "workflow", "begin", "open", "up"}
+
+
+def _keywords(text: str) -> set[str]:
+    words = "".join(c if c.isalnum() or c.isspace() else " " for c in text.lower()).split()
+    return {w for w in words if w not in _FILLER}
+
+
 def get_routine(name: str) -> dict[str, Any] | None:
-    """Case-insensitive lookup, tolerant of 'the'/'my' padding in speech."""
+    """Find a routine by spoken name.
+
+    Speech gives us padded, punctuated phrasings - "run my dev setup, please" -
+    so exact and substring matching both miss. Compare the meaningful words
+    instead and take the best-scoring routine.
+    """
     data = _load_raw()
     key = name.lower().strip()
     if key in data:
         return data[key]
+
+    said = _keywords(key)
+    if not said:
+        return None
+
+    best, best_score = None, 0.0
     for k, v in data.items():
-        if k.lower() == key:
-            return v
-    # "start my dev setup" -> match on containment either way round.
-    for k, v in data.items():
-        if k.lower() in key or key in k.lower():
-            return v
-    return None
+        words = _keywords(k)
+        if not words:
+            continue
+        # How much of the routine's own name did they actually say?
+        score = len(words & said) / len(words)
+        if score > best_score:
+            best, best_score = v, score
+
+    # Needs most of the name, so "wind down" can't be triggered by "open down".
+    return best if best_score >= 0.6 else None
 
 
 def save_routine(name: str, description: str, steps: list[dict[str, Any]],
