@@ -16,7 +16,7 @@ from typing import Any, Callable
 
 from anthropic import Anthropic
 
-from .tools import apps, files, input as input_tools, media, screen, shell, system
+from .tools import apps, files, input as input_tools, media, routines, screen, shell, system
 
 log = logging.getLogger("voxie.llm")
 
@@ -218,6 +218,52 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
         "input_schema": {"type": "object", "properties": {}},
     },
     {
+        "name": "list_routines",
+        "description": "List the user's saved routines (named multi-step workflows) with their descriptions.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "run_routine",
+        "description": "Run a saved routine by name, e.g. 'dev setup'. Executes all of its steps in order. If unsure which routine they meant, call list_routines first.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
+        "name": "save_routine",
+        "description": "Create or replace a routine so the user can trigger a whole workflow by name later. Steps are a list of {tool, args} using voxie's own tools, run in order. Insert a wait step after opening an app.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "description": {"type": "string"},
+                "steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "tool": {"type": "string"},
+                            "args": {"type": "object"},
+                        },
+                        "required": ["tool"],
+                    },
+                },
+            },
+            "required": ["name", "description", "steps"],
+        },
+    },
+    {
+        "name": "delete_routine",
+        "description": "Delete a saved routine by name.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"name": {"type": "string"}},
+            "required": ["name"],
+        },
+    },
+    {
         "name": "snap_window",
         "description": "Lay out the focused window: left / right / maximize / minimize / restore.",
         "input_schema": {
@@ -266,7 +312,44 @@ def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[s
         "clipboard_write": system.clipboard_write,
         "clipboard_read": system.clipboard_read,
         "snap_window": system.snap_window,
+        "list_routines": routines.list_routines,
+        "delete_routine": routines.delete_routine,
     }
+
+
+def _run_routine(name: str, dispatcher: dict, on_tool) -> dict[str, Any]:
+    """Execute a saved routine's steps in order.
+
+    Steps run through the same dispatcher as normal tool calls, so a routine
+    can use anything voxie can do. A failing step stops the run rather than
+    ploughing on - later steps usually assume the earlier ones worked.
+    """
+    routine = routines.get_routine(name)
+    if routine is None:
+        avail = [r["name"] for r in routines.list_routines()["routines"]]
+        return {"ok": False, "error": f"no routine called {name!r}", "available": avail}
+
+    done = []
+    for i, step in enumerate(routine.get("steps", [])):
+        tool = step.get("tool", "")
+        args = step.get("args", {}) or {}
+        handler = dispatcher.get(tool)
+        if handler is None:
+            return {"ok": False, "error": f"step {i}: unknown tool {tool!r}", "completed": done}
+        try:
+            res = handler(**args)
+        except Exception as e:
+            return {"ok": False, "error": f"step {i} ({tool}) crashed: {e}", "completed": done}
+        if on_tool:
+            try:
+                on_tool(f"{tool} [routine]", res)
+            except Exception:
+                log.exception("on_tool callback raised")
+        if not res.get("ok", True):
+            return {"ok": False, "error": f"step {i} ({tool}) failed: {res.get('error')}",
+                    "completed": done}
+        done.append(tool)
+    return {"ok": True, "routine": name, "steps_run": len(done)}
 
 
 class Assistant:
@@ -368,6 +451,35 @@ class Assistant:
                             {"type": "image",
                              "source": {"type": "base64", "media_type": shot.media_type, "data": shot.image_b64}},
                         ],
+                    })
+                    continue
+
+                # run_routine and save_routine both need the dispatcher: one to
+                # execute a routine's steps, the other to validate tool names.
+                if name == "run_routine":
+                    result = _run_routine(args.get("name", ""), dispatcher, on_tool)
+                    if on_tool:
+                        try:
+                            on_tool(name, result)
+                        except Exception:
+                            log.exception("on_tool callback raised")
+                    tool_results.append({
+                        "type": "tool_result", "tool_use_id": block.id, "content": str(result),
+                    })
+                    continue
+
+                if name == "save_routine":
+                    result = routines.save_routine(
+                        args.get("name", ""), args.get("description", ""),
+                        args.get("steps", []), valid_tools=set(dispatcher) | {"take_screenshot"},
+                    )
+                    if on_tool:
+                        try:
+                            on_tool(name, result)
+                        except Exception:
+                            log.exception("on_tool callback raised")
+                    tool_results.append({
+                        "type": "tool_result", "tool_use_id": block.id, "content": str(result),
                     })
                     continue
 
