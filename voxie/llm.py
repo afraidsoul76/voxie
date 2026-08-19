@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any, Callable
 
 from anthropic import Anthropic
@@ -20,6 +21,9 @@ from anthropic import Anthropic
 from .tools import apps, files, input as input_tools, media, routines, screen, shell, system
 
 log = logging.getLogger("voxie.llm")
+
+# Pause after a click before capturing the result, so the UI has repainted.
+CLICK_SETTLE_S = 0.45
 
 SYSTEM_PROMPT = """You are voxie, a voice assistant that can both ANSWER and ACT.
 
@@ -54,8 +58,11 @@ Acting guidelines:
 - Only when you must click something by position: call `take_screenshot` first,
   then `click_xy` with coordinates in that screenshot's pixel space (top-left is
   0,0). The screenshot result tells you its width and height.
-- If a click doesn't land where you expected, take a fresh screenshot to see the
-  new state before trying again - don't guess twice.
+- Every click hands back a picture of the screen afterwards. LOOK at it before
+  moving on: did the menu open, did the field focus, did anything change at all?
+  If it did not, the coordinate was off - find the target in that new picture and
+  click again rather than carrying on as if it worked.
+  If two attempts fail, stop and say what you are seeing instead of flailing.
 - After opening an app or navigating to a page, `wait` a second or two before you
   take_screenshot - acting before it renders is the #1 cause of missed clicks.
 - Use `scroll` to reach things off-screen before trying to click them.
@@ -120,7 +127,7 @@ TOOLS_SCHEMA: list[dict[str, Any]] = [
     },
     {
         "name": "click_xy",
-        "description": "Click at an (x, y) coordinate on the primary display. Coordinates must be relative to the most recent screenshot you took with take_screenshot.",
+        "description": "Click at an (x, y) coordinate on the primary display. Coordinates must be relative to the most recent screenshot. Returns a fresh screenshot of the result, so you can see whether the click did what you meant.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -588,6 +595,49 @@ class Assistant:
                             log.exception("on_tool callback raised")
                     tool_results.append({
                         "type": "tool_result", "tool_use_id": block.id, "content": str(result),
+                    })
+                    continue
+
+                # click_xy answers with a fresh screenshot of the result.
+                # Clicking blind was the main source of "it did the wrong
+                # thing": a coordinate that was slightly off, or a UI that had
+                # moved, failed silently and the model carried on as if it had
+                # worked. Seeing the outcome lets it notice and correct.
+                if name == "click_xy":
+                    handler = dispatcher.get("click_xy")
+                    try:
+                        res = handler(**args)
+                    except Exception as e:
+                        res = {"ok": False, "error": f"click crashed: {e}"}
+                    if on_tool:
+                        try:
+                            on_tool(name, res)
+                        except Exception:
+                            log.exception("on_tool callback raised")
+
+                    if not res.get("ok"):
+                        tool_results.append({
+                            "type": "tool_result", "tool_use_id": block.id,
+                            "content": str(res),
+                        })
+                        continue
+
+                    time.sleep(CLICK_SETTLE_S)  # let the UI repaint
+                    after = screen.capture_primary()
+                    shot_holder["shot"] = after
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": block.id,
+                        "content": [
+                            {"type": "text",
+                             "text": f"Clicked. This is the screen now ({after.sent_width}"
+                                     f"x{after.sent_height} px) - check it did what you "
+                                     f"intended before moving on. If it did not, look at "
+                                     f"where things actually are and try again."},
+                            {"type": "image",
+                             "source": {"type": "base64", "media_type": after.media_type,
+                                        "data": after.image_b64}},
+                        ],
                     })
                     continue
 
