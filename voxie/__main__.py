@@ -118,7 +118,18 @@ class Voxie:
                        if d.get("max_input_channels", 0) >= 1]
         except Exception:
             devices = []
-        SettingsWindow(self.overlay.root, devices, on_applied=self._apply_settings)
+        SettingsWindow(self.overlay.root, devices,
+                       on_applied=self._apply_settings,
+                       compose=self._compose_routine)
+
+    def _compose_routine(self, description: str) -> dict:
+        """Let the settings window turn plain English into routine steps."""
+        from .llm import TOOLS_SCHEMA, compose_routine
+
+        return compose_routine(
+            self.assistant.client, self.cfg.model, description,
+            [t["name"] for t in TOOLS_SCHEMA],
+        )
 
     def _apply_settings(self, updates: dict) -> None:
         """Apply what can change without a restart; the rest needs one."""
@@ -142,13 +153,54 @@ class Voxie:
             self._stop_and_process()
         # ignore toggles during thinking/acting — user has to wait
 
-    def _start_listen(self) -> None:
+    def _start_listen(self, auto_stop: bool = False) -> None:
         self._mic_for_recorder()
         self.overlay.clear_trace()
         self.overlay.set_transcript("listening...")
         self.overlay.set_listening(True)
         self._set_state(State.LISTENING)  # sets busy → pill fades in
         self.recorder.start()
+
+    # Auto-stop tuning for wake-word sessions.
+    SPEECH_LEVEL = 0.08      # recorder.level counts as speech above this
+    WAIT_FOR_SPEECH_S = 5.0  # give up if they never start talking
+    SILENCE_HOLD_S = 1.3     # end the turn after this much quiet
+    MAX_RECORD_S = 20.0      # hard ceiling
+
+    def _auto_stop_watch(self) -> None:
+        """End a wake-started recording once the speaker stops."""
+        started = time.time()
+        heard_speech = False
+        quiet_since: float | None = None
+
+        while self._state == State.LISTENING:
+            time.sleep(0.1)
+            now = time.time()
+            level = self.recorder.level
+
+            if now - started > self.MAX_RECORD_S:
+                break
+            if level >= self.SPEECH_LEVEL:
+                heard_speech = True
+                quiet_since = None
+                continue
+            if not heard_speech:
+                if now - started > self.WAIT_FOR_SPEECH_S:
+                    # Nothing was ever said - drop the turn instead of sending
+                    # silence off to be transcribed.
+                    self.overlay.set_listening(False)
+                    self.recorder.stop()
+                    self.overlay.set_transcript("(never mind)")
+                    self._set_state(State.IDLE)
+                    return
+                continue
+            quiet_since = quiet_since or now
+            if now - quiet_since >= self.SILENCE_HOLD_S:
+                break
+
+        # The hotkey may have ended it while we were waiting.
+        if self._state == State.LISTENING:
+            self._stop_and_process()
 
     def _stop_and_process(self) -> None:
         self.overlay.set_listening(False)
@@ -210,7 +262,7 @@ class Voxie:
 
     def _wake_start(self) -> None:
         self.speaker.say("Yes?")
-        self._start_listen()
+        self._start_listen(auto_stop=True)
 
     def _mic_for_recorder(self) -> None:
         """Wake listener and recorder can't hold the mic at once."""

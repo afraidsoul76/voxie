@@ -11,6 +11,7 @@ so the model can ground click coordinates against what's actually on screen.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any, Callable
 
@@ -66,6 +67,19 @@ Acting guidelines:
 Always reply in English, regardless of app names or on-screen text in other
 languages - the reply is spoken aloud by an English voice.
 """
+
+
+PROMPT_TEMPLATE = """Turn this description of a desktop workflow into a JSON list of steps.
+
+Description: {description}
+
+Available tools: {tools}
+
+Each step is {{"tool": "<tool name>", "args": {{...}}}}. Put a
+{{"tool": "wait", "args": {{"seconds": 2}}}} step after opening an app so it has
+time to appear.
+
+Reply with ONLY the JSON list. No prose, no code fences."""
 
 
 TOOLS_SCHEMA: list[dict[str, Any]] = [
@@ -315,6 +329,42 @@ def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[s
         "list_routines": routines.list_routines,
         "delete_routine": routines.delete_routine,
     }
+
+
+def compose_routine(client, model: str, description: str, tool_names: list[str]) -> dict:
+    """Turn a plain-English description into routine steps.
+
+    Used by the settings window so nobody has to hand-write step JSON. Claude
+    already knows the tools, so it only has to emit the step list.
+    """
+    prompt = PROMPT_TEMPLATE.format(
+        description=description,
+        tools=", ".join(tool_names),
+    )
+    try:
+        resp = client.messages.create(
+            model=model, max_tokens=900,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = "".join(
+            b.text for b in resp.content if getattr(b, "type", None) == "text"
+        ).strip()
+    except Exception as e:
+        return {"ok": False, "error": f"could not reach the model: {e}"}
+
+    # Models like to wrap JSON in fences even when told not to.
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1] if len(parts) > 1 else text
+        if text.lstrip().startswith("json"):
+            text = text.lstrip()[4:]
+    try:
+        steps = json.loads(text.strip())
+    except json.JSONDecodeError as e:
+        return {"ok": False, "error": f"model did not return valid JSON: {e}"}
+    if not isinstance(steps, list) or not steps:
+        return {"ok": False, "error": "model returned no steps"}
+    return {"ok": True, "steps": steps}
 
 
 def _run_routine(name: str, dispatcher: dict, on_tool) -> dict[str, Any]:
