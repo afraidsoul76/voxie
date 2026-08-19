@@ -9,6 +9,8 @@ A voice-controlled desktop assistant powered by Claude. **Say what you want — 
 
 > Personal project, Windows-first. See [Security and privacy](#security-and-privacy) for what it can and can't be trusted with.
 
+![demo](docs/demo.gif)
+
 ---
 
 ## What it does
