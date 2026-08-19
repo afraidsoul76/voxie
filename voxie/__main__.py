@@ -127,8 +127,7 @@ class Voxie:
         from .llm import TOOLS_SCHEMA, compose_routine
 
         return compose_routine(
-            self.assistant.client, self.cfg.model, description,
-            [t["name"] for t in TOOLS_SCHEMA],
+            self.assistant.client, self.cfg.model, description, TOOLS_SCHEMA,
         )
 
     def _apply_settings(self, updates: dict) -> None:

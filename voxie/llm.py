@@ -69,17 +69,16 @@ languages - the reply is spoken aloud by an English voice.
 """
 
 
-PROMPT_TEMPLATE = """Turn this description of a desktop workflow into a JSON list of steps.
+PROMPT_TEMPLATE = """Build a desktop workflow from this description.
 
 Description: {description}
 
-Available tools: {tools}
+Available tools and their exact argument names:
+{tools}
 
-Each step is {{"tool": "<tool name>", "args": {{...}}}}. Put a
-{{"tool": "wait", "args": {{"seconds": 2}}}} step after opening an app so it has
-time to appear.
-
-Reply with ONLY the JSON list. No prose, no code fences."""
+Use those argument names exactly. Put a wait step (about 2 seconds) after
+opening an app so it has time to appear. Use open_url for websites rather than
+clicking through a browser. Submit the steps with the submit_routine tool."""
 
 
 TOOLS_SCHEMA: list[dict[str, Any]] = [
@@ -331,40 +330,91 @@ def _make_dispatcher(shot_holder: dict[str, screen.Screenshot | None]) -> dict[s
     }
 
 
-def compose_routine(client, model: str, description: str, tool_names: list[str]) -> dict:
+# Forcing a tool call makes the model emit schema-validated JSON, so there is
+# nothing to parse and nothing to truncate mid-array. Free-text parsing kept
+# failing with "Unterminated" when a reply ran past the token limit.
+ROUTINE_SUBMIT_TOOL = {
+    "name": "submit_routine",
+    "description": "Submit the steps that make up this routine.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "description": "The steps, in the order they should run.",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "tool": {"type": "string", "description": "One of the available tool names."},
+                        "args": {"type": "object", "description": "Arguments for that tool."},
+                    },
+                    "required": ["tool"],
+                },
+            }
+        },
+        "required": ["steps"],
+    },
+}
+
+
+def _tool_signatures(schema: list[dict]) -> str:
+    """One line per tool: name(arg, arg) - description.
+
+    Passing only tool names made the model invent argument names -
+    open_app(app=...) instead of open_app(name=...) - which then failed
+    at run time. It needs the real signatures.
+    """
+    lines = []
+    for t in schema:
+        props = (t.get('input_schema') or {}).get('properties') or {}
+        req = set((t.get('input_schema') or {}).get('required') or [])
+        args = ', '.join(a if a in req else f'{a}?' for a in props)
+        lines.append(f"- {t['name']}({args})")
+    return chr(10).join(lines)
+
+
+def compose_routine(client, model: str, description: str, schema: list[dict]) -> dict:
     """Turn a plain-English description into routine steps.
 
-    Used by the settings window so nobody has to hand-write step JSON. Claude
-    already knows the tools, so it only has to emit the step list.
+    Used by the settings window so nobody has to hand-write step JSON.
     """
-    prompt = PROMPT_TEMPLATE.format(
-        description=description,
-        tools=", ".join(tool_names),
-    )
+    prompt = PROMPT_TEMPLATE.format(description=description, tools=_tool_signatures(schema))
     try:
         resp = client.messages.create(
-            model=model, max_tokens=900,
+            model=model,
+            max_tokens=2048,
+            tools=[ROUTINE_SUBMIT_TOOL],
+            tool_choice={"type": "tool", "name": "submit_routine"},
             messages=[{"role": "user", "content": prompt}],
         )
-        text = "".join(
-            b.text for b in resp.content if getattr(b, "type", None) == "text"
-        ).strip()
     except Exception as e:
         return {"ok": False, "error": f"could not reach the model: {e}"}
 
-    # Models like to wrap JSON in fences even when told not to.
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1] if len(parts) > 1 else text
-        if text.lstrip().startswith("json"):
-            text = text.lstrip()[4:]
-    try:
-        steps = json.loads(text.strip())
-    except json.JSONDecodeError as e:
-        return {"ok": False, "error": f"model did not return valid JSON: {e}"}
-    if not isinstance(steps, list) or not steps:
-        return {"ok": False, "error": "model returned no steps"}
-    return {"ok": True, "steps": steps}
+    for block in resp.content:
+        if getattr(block, "type", None) == "tool_use" and block.name == "submit_routine":
+            steps = (block.input or {}).get("steps") or []
+            if not steps:
+                return {"ok": False, "error": "no steps returned - try describing it differently"}
+            by_name = {t["name"]: t for t in schema}
+            cleaned = []
+            for st in steps:
+                if not isinstance(st, dict) or "tool" not in st:
+                    continue
+                tool = st["tool"]
+                if tool not in by_name:
+                    return {"ok": False, "error": f"made up a tool: {tool}"}
+                args = st.get("args") or {}
+                allowed = set(((by_name[tool].get("input_schema") or {}).get("properties") or {}))
+                unknown = set(args) - allowed
+                if unknown:
+                    return {"ok": False,
+                            "error": f"{tool} has no argument {', '.join(sorted(unknown))}"}
+                cleaned.append({"tool": tool, "args": args})
+            if not cleaned:
+                return {"ok": False, "error": "steps were malformed"}
+            return {"ok": True, "steps": cleaned}
+
+    return {"ok": False, "error": "model did not submit any steps"}
 
 
 def _run_routine(name: str, dispatcher: dict, on_tool) -> dict[str, Any]:
