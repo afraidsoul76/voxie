@@ -1,5 +1,10 @@
 # 🎙️ voxie
 
+[![PyPI](https://img.shields.io/pypi/v/voxie-assistant?color=brightgreen)](https://pypi.org/project/voxie-assistant/)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows-informational)]()
+
 A voice-controlled desktop assistant powered by Claude. **Say what you want — voxie decides how to do it, does it, and tells you what happened.**
 
 > Personal project, Windows-first. See [Security and privacy](#security-and-privacy) for what it can and can't be trusted with.
@@ -67,22 +72,40 @@ Say **"voxie"** (or press a hotkey), speak, and stop. There's nothing else to pr
 
 ## Install
 
-Windows, Python 3.10+.
+Windows, Python 3.10+, and your own [Anthropic API key](https://console.anthropic.com).
+
+```bash
+pip install voxie-assistant
+```
+
+Then create a `.env` next to wherever you run it, with at least:
+
+```
+ANTHROPIC_API_KEY=sk-ant-...
+```
+
+and start it:
+
+```bash
+voxie
+```
+
+First run downloads the Whisper model (~150 MB). Everything else is configured
+from the tray menu.
+
+<details>
+<summary>From source instead</summary>
 
 ```bash
 git clone https://github.com/afraidsoul76/voxie.git
 cd voxie
 python -m venv .venv
-.venv\Scripts\activate
+.venv\Scriptsctivate
 pip install -r requirements.txt
-
-copy .env.example .env
-# add your ANTHROPIC_API_KEY
-
+copy .env.example .env      # add ANTHROPIC_API_KEY
 python -m voxie
 ```
-
-First run downloads the Whisper model (~150 MB).
+</details>
 
 ## Configuration
 
