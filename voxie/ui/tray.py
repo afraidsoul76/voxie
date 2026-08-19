@@ -31,6 +31,7 @@ class Tray:
         "listening": ("#ef4444", "voxie · listening"),
         "thinking":  ("#f59e0b", "voxie · thinking"),
         "acting":    ("#10b981", "voxie · acting"),
+        "dictating": ("#8b5cf6", "voxie · dictating"),
     }
 
     def __init__(

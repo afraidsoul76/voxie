@@ -17,6 +17,10 @@ class Config:
     input_device: str | None  # int as str (device index) OR substring of device name
     tts_enabled: bool
     voice_rate: int | None
+    dictate_hotkey: str
+    wake_enabled: bool
+    wake_phrase: str
+    wake_model: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -32,9 +36,13 @@ class Config:
             model=os.environ.get("VOXIE_MODEL", "claude-sonnet-4-5").strip(),
             whisper_model=os.environ.get("VOXIE_WHISPER_MODEL", "base.en").strip(),
             hotkey=os.environ.get("VOXIE_HOTKEY", "<ctrl>+<alt>+<space>").strip(),
+            dictate_hotkey=os.environ.get("VOXIE_DICTATE_HOTKEY", "<ctrl>+<alt>+d").strip(),
             input_device=(os.environ.get("VOXIE_INPUT_DEVICE", "").strip() or None),
             tts_enabled=os.environ.get("VOXIE_TTS", "on").strip().lower() not in ("off", "0", "false", "no"),
             voice_rate=_int_or_none(os.environ.get("VOXIE_VOICE_RATE", "").strip()),
+            wake_enabled=os.environ.get("VOXIE_WAKE", "off").strip().lower() in ("on", "1", "true", "yes"),
+            wake_phrase=os.environ.get("VOXIE_WAKE_PHRASE", "voxie").strip(),
+            wake_model=os.environ.get("VOXIE_WAKE_MODEL", "tiny.en").strip(),
         )
 
 
