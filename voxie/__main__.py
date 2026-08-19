@@ -79,6 +79,7 @@ class Voxie:
                 on_wake=self._on_wake,
                 model_name=cfg.wake_model,
                 device=device_idx,
+                aliases=cfg.wake_aliases,
             )
 
     # ---- state ----

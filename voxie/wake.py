@@ -17,6 +17,7 @@ recorder opens its own stream.
 """
 from __future__ import annotations
 
+import difflib
 import logging
 import queue
 import threading
@@ -42,6 +43,57 @@ def _normalize(s: str) -> str:
     return "".join(c for c in s.lower() if c.isalnum() or c.isspace()).strip()
 
 
+# Wake phrases are usually invented words, so Whisper spells them however they
+# sounded: "voxie" comes back as voxy / foxy / boxy / vox. Exact matching almost
+# never fires.
+#
+# Character similarity turns out to be the wrong tool - it scores "voxy" at 0.67
+# but "moxie" at 0.80, i.e. backwards from how they actually sound. So the
+# primary mechanism is an explicit alias list (deterministic, tunable), with a
+# conservative fuzzy check as a fallback for spellings nobody predicted.
+#
+# Unmatched transcripts are logged, so if your voice trips a spelling that isn't
+# listed you can see it and add it via VOXIE_WAKE_ALIASES.
+SIMILARITY = 0.8
+
+DEFAULT_ALIASES = {
+    "voxie": ["voxy", "voxi", "vocksy", "voxie", "vox", "voxxy", "foxy", "boxy",
+              "vauxy", "vocksie", "walksy", "vaux"],
+}
+
+
+def build_vocab(phrase: str, extra: str = "") -> set[str]:
+    """All spellings that should count as the wake phrase."""
+    vocab = {phrase}
+    vocab.update(DEFAULT_ALIASES.get(phrase, []))
+    vocab.update(a.strip().lower() for a in extra.split(",") if a.strip())
+    return {v for v in vocab if v}
+
+
+def _phrase_hit(vocab: set[str], canonical: str, heard: str) -> tuple[bool, str]:
+    """True if `heard` plausibly contains any spelling of the wake phrase."""
+    if not heard:
+        return False, ""
+
+    # Exact containment of any known spelling, on word boundaries.
+    words = heard.split()
+    wordset = set(words)
+    for v in vocab:
+        if " " in v:
+            if v in heard:
+                return True, v
+        elif v in wordset:
+            return True, v
+
+    # Fuzzy fallback, against the CANONICAL phrase only. Fuzzy-matching the
+    # aliases too was a mistake: with "foxy" listed, the ordinary word "fox"
+    # scored 0.86 and tripped the wake on any sentence mentioning a fox.
+    for w in words:
+        if difflib.SequenceMatcher(None, canonical, w).ratio() >= SIMILARITY:
+            return True, w
+    return False, ""
+
+
 class WakeListener:
     """Listens for a wake phrase and calls `on_wake()` when it hears one."""
 
@@ -51,8 +103,10 @@ class WakeListener:
         on_wake: Callable[[], None],
         model_name: str = "tiny.en",
         device: int | None = None,
+        aliases: str = "",
     ) -> None:
         self.phrase = _normalize(phrase)
+        self.vocab = build_vocab(self.phrase, aliases)
         self.on_wake = on_wake
         self.model_name = model_name
         self.device = device
@@ -134,7 +188,7 @@ class WakeListener:
                         blocksize=BLOCK, callback=self._callback, device=self.device,
                     )
                     stream.start()
-                    log.info("wake listener armed (phrase: %r)", self.phrase)
+                    log.info("wake listener armed - phrase %r, %d spellings accepted", self.phrase, len(self.vocab))
                 except Exception as e:
                     log.warning("could not open mic for wake listening: %s", e)
                     time.sleep(1.0)
@@ -182,9 +236,9 @@ class WakeListener:
 
         if not text:
             return
-        log.debug("wake heard: %r", text)
-        if self.phrase in text:
-            log.info("wake word detected in %r", text)
+        hit, matched = _phrase_hit(self.vocab, self.phrase, text)
+        log.info("heard %r -> %s", text, f"WAKE (matched {matched!r})" if hit else "no match")
+        if hit:
             self._last_fire = time.time()
             try:
                 self.on_wake()

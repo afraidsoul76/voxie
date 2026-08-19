@@ -21,6 +21,7 @@ class Config:
     wake_enabled: bool
     wake_phrase: str
     wake_model: str
+    wake_aliases: str
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -43,6 +44,7 @@ class Config:
             wake_enabled=os.environ.get("VOXIE_WAKE", "off").strip().lower() in ("on", "1", "true", "yes"),
             wake_phrase=os.environ.get("VOXIE_WAKE_PHRASE", "voxie").strip(),
             wake_model=os.environ.get("VOXIE_WAKE_MODEL", "tiny.en").strip(),
+            wake_aliases=os.environ.get("VOXIE_WAKE_ALIASES", "").strip(),
         )
 
 
