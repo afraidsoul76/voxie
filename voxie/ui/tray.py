@@ -39,6 +39,7 @@ class Tray:
         on_toggle_window: Callable[[], None],
         on_toggle_listen: Callable[[], None],
         on_clear_memory: Callable[[], None],
+        on_settings: Callable[[], None],
         on_quit: Callable[[], None],
         is_window_visible: Callable[[], bool],
     ) -> None:
@@ -53,6 +54,8 @@ class Tray:
             ),
             pystray.MenuItem("Start / stop listening", on_toggle_listen),
             pystray.MenuItem("Clear memory", on_clear_memory),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Settings...", on_settings),
             pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", on_quit),
         )

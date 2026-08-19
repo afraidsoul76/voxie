@@ -32,6 +32,7 @@ from .llm import Assistant
 from .tools.input import type_text
 from .speech import Speaker
 from .ui.overlay import Overlay
+from .ui.settings import SettingsWindow
 from .ui.tray import Tray
 from .wake import WakeListener
 
@@ -66,6 +67,7 @@ class Voxie:
             on_toggle_window=self.overlay_toggle,
             on_toggle_listen=self.toggle,
             on_clear_memory=self.clear_memory,
+            on_settings=self.open_settings,
             on_quit=self.quit,
             is_window_visible=lambda: self.overlay.is_visible,
         )
@@ -102,6 +104,30 @@ class Voxie:
     def overlay_toggle(self) -> None:
         """Show/hide the floating window. Bound to a tray-icon click."""
         self.overlay.toggle()
+
+    def open_settings(self, *_args) -> None:
+        """Tray callbacks arrive on the pystray thread; Tk work must happen on
+        the mainloop, so hop threads before building the window."""
+        self.overlay.post(self._show_settings)
+
+    def _show_settings(self) -> None:
+        try:
+            import sounddevice as sd
+
+            devices = [(i, d["name"]) for i, d in enumerate(sd.query_devices())
+                       if d.get("max_input_channels", 0) >= 1]
+        except Exception:
+            devices = []
+        SettingsWindow(self.overlay.root, devices, on_applied=self._apply_settings)
+
+    def _apply_settings(self, updates: dict) -> None:
+        """Apply what can change without a restart; the rest needs one."""
+        if "VOXIE_TTS" in updates:
+            self.speaker.enabled = updates["VOXIE_TTS"] == "on"
+        rate = updates.get("VOXIE_VOICE_RATE", "").strip()
+        if rate.isdigit():
+            self.speaker.set_rate(int(rate))
+        log.info("settings applied (restart needed for hotkeys/wake/models)")
 
     def clear_memory(self, *_args) -> None:
         self.assistant.reset_memory()

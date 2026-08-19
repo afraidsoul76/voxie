@@ -30,6 +30,7 @@ class Speaker:
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._started = False
+        self._rebuild = threading.Event()
 
     def start(self) -> None:
         if self._started or not self.enabled:
@@ -61,6 +62,12 @@ class Speaker:
                     break
                 if not text.strip():
                     continue
+                if self._rebuild.is_set():
+                    self._rebuild.clear()
+                    rebuilt = self._make_speak_fn()
+                    if rebuilt is not None:
+                        speak = rebuilt
+                        log.info("TTS rebuilt at rate=%s", self._rate)
                 try:
                     log.info("speaking: %s", text[:80])
                     speak(text)
@@ -121,6 +128,15 @@ class Speaker:
         except Exception as e:
             log.warning("no TTS backend available, disabling: %s", e)
             return None
+
+    def set_rate(self, rate: int) -> None:
+        """Change speaking rate. Takes effect on the next utterance."""
+        if rate == self._rate:
+            return
+        self._rate = rate
+        # The worker owns the voice object; flag it to rebuild rather than
+        # touching it from this thread (SAPI is COM and thread-affine).
+        self._rebuild.set()
 
     def say(self, text: str) -> None:
         """Queue text to be spoken. No-op if TTS is disabled."""
