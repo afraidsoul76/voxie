@@ -89,8 +89,11 @@ def _render_card() -> Image.Image:
 
     d = ImageDraw.Draw(card)
     d.rounded_rectangle((0, 0, w - 1, h - 1), RADIUS * SS, outline=BORDER, width=SS)
-    # A brighter arc along the top edge gives the card a lit, glassy feel.
-    d.arc((SS, SS, w - SS, h * 2), start=180, end=360, fill=(58, 74, 102), width=SS)
+    # A short brighter run along the top edge reads as a lit rim. Drawn as a
+    # line inset past the corner radius - an arc spanning the whole card swept
+    # a visible curve straight through the middle of it.
+    inset = RADIUS * SS
+    d.line((inset, SS, w - inset, SS), fill=(58, 74, 102), width=SS)
 
     out = Image.new("RGB", (W, H), _CHROMA_RGB)
     out.paste(card.resize((W - 2 * PAD, H - 2 * PAD), Image.LANCZOS), (PAD, PAD))

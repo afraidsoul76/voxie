@@ -116,6 +116,7 @@ class WakeListener:
         self._thread: threading.Thread | None = None
         self._stop = threading.Event()
         self._paused = threading.Event()
+        self._released = threading.Event()  # set once the mic is actually closed
         self._q: queue.Queue[np.ndarray] = queue.Queue()
         self._last_fire = 0.0
 
@@ -131,11 +132,20 @@ class WakeListener:
     def stop(self) -> None:
         self._stop.set()
 
-    def pause(self) -> None:
-        """Release the mic so the main recorder can use it."""
+    def pause(self, timeout: float = 2.0) -> bool:
+        """Release the mic and WAIT until it is really closed.
+
+        Sleeping a fixed 150ms here was not enough: the listener can be busy
+        transcribing a burst (1-2s), so the recorder opened while the device was
+        still held, threw, and killed the thread before the auto-stop watchdog
+        was ever started - leaving voxie stuck in LISTENING forever.
+        """
+        self._released.clear()
         self._paused.set()
+        return self._released.wait(timeout)
 
     def resume(self) -> None:
+        self._released.clear()
         self._paused.clear()
 
     # ---- internals ----
@@ -179,6 +189,7 @@ class WakeListener:
                             self._q.get_nowait()
                         except queue.Empty:
                             break
+                self._released.set()  # the recorder may now open the device
                 time.sleep(0.1)
                 continue
 

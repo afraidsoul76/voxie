@@ -276,9 +276,8 @@ class Voxie:
 
     def _mic_for_recorder(self) -> None:
         """Wake listener and recorder can't hold the mic at once."""
-        if self.wake is not None:
-            self.wake.pause()
-            time.sleep(0.15)  # let the stream actually close
+        if self.wake is not None and not self.wake.pause(timeout=2.0):
+            log.warning("wake listener did not release the mic in time")
 
     def _mic_back_to_wake(self) -> None:
         if self.wake is not None:
