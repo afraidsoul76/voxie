@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+# The import name stays `voxie`; the distribution name is voxie-assistant
+# because `voxie` on PyPI is an unrelated error-explainer CLI.
+name = "voxie-assistant"
+version = "0.1.0"
+description = "Voice-controlled desktop assistant powered by Claude, with local speech-to-text"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "afraidsoul76" }]
+keywords = [
+    "voice-assistant", "speech-recognition", "whisper", "claude", "anthropic",
+    "desktop-automation", "wake-word", "tts", "llm", "ai-agent",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Win32 (MS Windows)",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: Microsoft :: Windows",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+    "Topic :: Desktop Environment",
+]
+
+dependencies = [
+    "anthropic>=0.40.0",
+    "faster-whisper>=1.1.0",
+    "sounddevice>=0.5.1",
+    "numpy>=1.26.0",
+    "pyautogui>=0.9.54",
+    "PyGetWindow>=0.0.9",
+    "mss>=10.0.0",
+    "Pillow>=10.4.0",
+    "pystray>=0.19.5",
+    "pynput>=1.7.7",
+    "pyttsx3>=2.90",
+    "python-dotenv>=1.0.1",
+    # Windows only: lets the TTS worker thread initialise COM, without which
+    # pyttsx3 silently fails to speak from a background thread.
+    "pywin32>=306 ; sys_platform == 'win32'",
+]
+
+[project.urls]
+Homepage = "https://github.com/afraidsoul76/voxie"
+Repository = "https://github.com/afraidsoul76/voxie"
+Issues = "https://github.com/afraidsoul76/voxie/issues"
+
+[project.scripts]
+voxie = "voxie.__main__:main"
+
+[tool.setuptools]
+packages = ["voxie", "voxie.tools", "voxie.ui"]
+
+[tool.setuptools.package-data]
+voxie = ["py.typed"]
